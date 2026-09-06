@@ -20,12 +20,12 @@ try:
 
     load_dotenv()
 except ImportError:
-    load_dotenv = None
+    load_dotenv = None  # type: ignore[assignment]
 
 try:
     import httpx
 except ImportError:
-    httpx = None
+    httpx = None  # type: ignore[assignment]
 
 try:
     from supabase import Client, create_client  # type: ignore[import-not-found]
@@ -64,6 +64,7 @@ class TelemetryStore:
 
         self.total_inserted_telemetry: int = 0
         self.total_inserted_events: int = 0
+        self._failure_count: int = 0
         self.last_error: str | None = None
 
         if self.enabled and self.url and self.key:
@@ -146,6 +147,27 @@ class TelemetryStore:
             "system_status": str(telemetry.get("system_status", "NOMINAL")),
         }
 
+    # Throttle for persistence-failure warnings: telemetry streams at ~1.25 Hz,
+    # so warn on the FIRST failure and then at most once per this many failures
+    # to keep the log useful without flooding it (S5: failures must be observable).
+    _WARN_EVERY_N_FAILURES = 50
+
+    def _warn_persistence_failure(self, context: str) -> None:
+        """Throttled WARNING so a silent Supabase failure cannot go unnoticed.
+
+        The write itself stays non-blocking; the local deque still absorbs the
+        frame. Only the OBSERVABILITY of the failure is added here.
+        """
+        self._failure_count += 1
+        if self._failure_count == 1 or self._failure_count % self._WARN_EVERY_N_FAILURES == 0:
+            logger.warning(
+                "PERSISTENCE FALLBACK (%s): remote write failed after %d failure(s); "
+                "telemetry preserved in local in-memory buffer. last_error=%s",
+                context,
+                self._failure_count,
+                self.last_error,
+            )
+
     def record_telemetry(self, telemetry: dict[str, Any]) -> None:
         """Records a single telemetry frame to Supabase or local deque."""
         payload = self._format_telemetry_payload(telemetry)
@@ -165,6 +187,11 @@ class TelemetryStore:
                 )
                 if res.status_code in (200, 201):
                     return
+                # Non-2xx (e.g. RLS 401/403 rejection) must be observable, not silent.
+                self.last_error = (
+                    f"Insert rejected: HTTP {res.status_code} from PostgREST"
+                )
+                self._warn_persistence_failure("telemetry/http-status")
                 # Fallback: if database preserved exact case iddq_uA
                 if "iddq_ua" in res.text:
                     self.http_client.post(
@@ -172,15 +199,13 @@ class TelemetryStore:
                     )
             except Exception as exc:
                 self.last_error = f"Insert error: {exc}"
-                logger.debug("PostgREST insert failed; local deque preserved: %s", exc)
+                self._warn_persistence_failure("telemetry/exception")
         elif self.client:
             try:
                 self.client.table("telemetry_logs").insert(payload).execute()
             except Exception as exc:
                 self.last_error = f"Insert error: {exc}"
-                logger.debug(
-                    "Supabase client insert failed; local deque preserved: %s", exc
-                )
+                self._warn_persistence_failure("telemetry/client")
 
     def record_event(
         self, event_type: str, severity: str, message: str, criticality_level: int = 2
@@ -198,11 +223,17 @@ class TelemetryStore:
 
         if self.http_client and self.url:
             try:
-                self.http_client.post(
+                res = self.http_client.post(
                     f"{self.url}/rest/v1/system_events", json=event_dict
                 )
+                if res.status_code not in (200, 201):
+                    self.last_error = (
+                        f"Event rejected: HTTP {res.status_code} from PostgREST"
+                    )
+                    self._warn_persistence_failure("event/http-status")
             except Exception as exc:
                 self.last_error = f"Event error: {exc}"
+                self._warn_persistence_failure("event/exception")
         elif self.client:
             try:
                 self.client.table("system_events").insert(event_dict).execute()

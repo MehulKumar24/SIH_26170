@@ -36,6 +36,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 # Copy installed Python packages from builder stage
 COPY --from=builder /root/.local /home/arjuna/.local
 ENV PATH=/home/arjuna/.local/bin:$PATH
+# FIX: useradd set the arjuna home to /app, so Python resolved user
+# site-packages at /app/.local (empty) and imports failed at runtime
+# (ModuleNotFoundError: uvicorn). Pin HOME to the directory that actually
+# contains the copied site-packages.
+ENV HOME=/home/arjuna
+# Container must bind 0.0.0.0 for published ports and the built-in healthcheck
+# to work (bare `docker run` — docker-compose.yml already sets HOST explicitly).
+ENV HOST=0.0.0.0
+ENV PORT=8000
+# Headless container: main.py skips webbrowser.open for 0.0.0.0 anyway; make it explicit.
+ENV NO_BROWSER=1
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 

@@ -3,6 +3,8 @@ tests/test_supabase.py — Project ARJUNA (SIH 26170)
 Automated tests for Supabase Schema Alignment, Payload Formatting, Filtering, and Outage Fallback.
 """
 
+import logging
+
 from Backend.database import TelemetryStore, telemetry_store
 
 
@@ -103,3 +105,110 @@ def test_telemetry_store_status_reporting():
     assert "supabase_available" in status
     assert "in_memory_records" in status
     assert "total_telemetry_logged" in status
+
+
+# =============================================================================
+# S5: Persistence failures must be OBSERVABLE, not silently swallowed.
+# A non-2xx PostgREST response (e.g. RLS 401/403 rejection) or a transport
+# exception must surface via last_error and a throttled WARNING while the
+# local in-memory buffer still absorbs the frame (non-blocking preserved).
+# =============================================================================
+
+class _FakeHttpResponse:
+    """Minimal stand-in for an httpx.Response."""
+
+    def __init__(self, status_code: int, text: str = ""):
+        self.status_code = status_code
+        self.text = text
+
+
+class _FailingHttpClient:
+    """Stands in for the PostgREST httpx client."""
+
+    def __init__(self, status_code: int = 403):
+        self.status_code = status_code
+        self.calls = 0
+
+    def post(self, url, json=None):
+        self.calls += 1
+        return _FakeHttpResponse(self.status_code, text="RLS violation")
+
+
+def test_rls_rejection_surfaces_in_last_error(caplog):
+    """A non-2xx (RLS-style) response must set last_error — never silent."""
+    store = TelemetryStore(history_limit=10)
+    store.url = "https://example.supabase.co"
+    store.http_client = _FailingHttpClient(status_code=403)  # type: ignore[assignment]
+    store.last_error = None
+
+    with caplog.at_level(logging.WARNING, logger="project_arjuna.database"):
+        store.record_telemetry(
+            {"timestamp": "2026-03-30T00:00:01Z", "voltage": 5.0, "current": 1.2,
+             "temperature": 125.0, "iddq_uA": 10.0, "fault_type": "NORMAL"}
+        )
+
+    assert store.last_error is not None
+    assert "403" in store.last_error
+    # Frame must still be absorbed by the in-memory buffer (non-blocking intact)
+    assert len(store.recent(limit=10)) == 1
+
+
+def test_persistence_failure_warning_is_throttled(caplog):
+    """First failure warns; subsequent failures do not flood the log."""
+    store = TelemetryStore(history_limit=100)
+    store.url = "https://example.supabase.co"
+    store.http_client = _FailingHttpClient(status_code=403)  # type: ignore[assignment]
+    store.last_error = None
+
+    with caplog.at_level(logging.WARNING, logger="project_arjuna.database"):
+        for _ in range(60):
+            store.record_telemetry(
+                {"timestamp": "2026-03-30T00:00:01Z", "voltage": 5.0, "current": 1.2,
+                 "temperature": 125.0, "iddq_uA": 10.0, "fault_type": "NORMAL"}
+            )
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    # 1st failure + the 50th failure = exactly 2 warnings out of 60 failures
+    assert len(warnings) == 2
+    assert all("PERSISTENCE FALLBACK" in r.getMessage() for r in warnings)
+
+
+def test_transport_exception_surfaces_in_last_error(caplog):
+    """A raised transport exception must set last_error and warn, not vanish."""
+    store = TelemetryStore(history_limit=10)
+    store.url = "https://example.supabase.co"
+
+    class _RaisingClient:
+        def post(self, url, json=None):
+            raise ConnectionError("network down")
+
+    store.http_client = _RaisingClient()  # type: ignore[assignment]
+    store.last_error = None
+
+    with caplog.at_level(logging.WARNING, logger="project_arjuna.database"):
+        store.record_telemetry(
+            {"timestamp": "2026-03-30T00:00:01Z", "voltage": 5.0, "current": 1.2,
+             "temperature": 125.0, "iddq_uA": 10.0, "fault_type": "NORMAL"}
+        )
+
+    assert store.last_error is not None
+    assert "network down" in store.last_error
+    assert any(
+        "PERSISTENCE FALLBACK" in r.getMessage()
+        for r in caplog.records if r.levelno == logging.WARNING
+    )
+    assert len(store.recent(limit=10)) == 1
+
+
+def test_event_rejection_surfaces_in_last_error():
+    """Non-2xx event insertion must set last_error (previously fully silent)."""
+    store = TelemetryStore(events_limit=10)
+    store.url = "https://example.supabase.co"
+    store.http_client = _FailingHttpClient(status_code=401)  # type: ignore[assignment]
+    store.last_error = None
+
+    store.record_event("INJECTION", "HIGH", "Spike injected", criticality_level=2)
+
+    assert store.last_error is not None
+    assert "401" in store.last_error
+    assert store.total_inserted_events == 1  # buffered locally regardless

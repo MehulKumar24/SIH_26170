@@ -1,0 +1,24 @@
+﻿# Environment files
+.env
+*.env
+**/.env
+
+# Python caches and environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Databases and runtime files
+*.db
+*.sqlite
+**/app_state_backup.json
+
+# OS files
+.DS_Store
+Thumbs.db

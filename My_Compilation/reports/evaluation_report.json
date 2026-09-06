@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-09-05T11:36:45Z",
+  "timestamp": "2026-09-06T06:49:08Z",
   "standard": "ECSS-Q-ST-60-02C & MIL-STD-883",
   "unseen_fault_benchmark": {
     "total_samples": 7500,
@@ -13,8 +13,8 @@
     "roc_auc": 0.9993,
     "false_negative_rate": 0.0,
     "false_positive_rate": 0.00138,
-    "avg_inference_latency_ms": 2.8237,
-    "p99_inference_latency_ms": 3.6707,
+    "avg_inference_latency_ms": 2.8559,
+    "p99_inference_latency_ms": 4.0719,
     "segment_metrics": {
       "nominal_false_positive_rate": 0.0,
       "instantaneous_outlier_recall": 1.0,

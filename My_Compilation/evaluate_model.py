@@ -723,7 +723,6 @@ def benchmark_unclamped_nominal(
     gate_crossings = 0
     module_a_flags = 0
     iid_flags = 0
-    n_samples = 3000
     for _ in range(n_samples):
         t, v, c = sim.step(dt=1.0, mode="normal")
         iq = round(random.gauss(lot_mean, lot_std), 2)  # UNCLAMPED nominal draw
@@ -793,7 +792,7 @@ def benchmark_unclamped_nominal(
 # ==============================================================================
 # 7. FULL EVALUATION ORCHESTRATION
 # ==============================================================================
-def run_full_evaluation():
+def run_full_evaluation(unclamped_nominal_samples: int = 3000):
     print("==========================================================================")
     print("  PROJECT ARJUNA (SIH 26170): COMPREHENSIVE AEROSPACE BENCHMARK SUITE    ")
     print("  Conforming to ECSS-Q-ST-60-02C & MIL-STD-883 Space Qualification        ")
@@ -856,7 +855,9 @@ def run_full_evaluation():
         )
 
     print("\n[Phase 6/6] Unclamped Nominal FP Honesty Check (H1)...")
-    unclamped_results = benchmark_unclamped_nominal(detector)
+    unclamped_results = benchmark_unclamped_nominal(
+        detector, n_samples=unclamped_nominal_samples
+    )
     print(
         f"  -> 3σ gate crossings (natural): {unclamped_results['natural_dynamic_gate_crossings']}/{unclamped_results['n_samples']} "
         f"({unclamped_results['natural_dynamic_gate_crossing_rate'] * 100:.3f}%)"
@@ -993,4 +994,32 @@ Module C CUSUM (which assumes no linearity) still detects persistent creep.
 
 
 if __name__ == "__main__":
-    run_full_evaluation()
+    # Opt-in high-statistics run: --large-nominal N raises the unclamped
+    # nominal FP honesty check from the default 3,000 samples (CI-comparable)
+    # to N samples, e.g. 20,000, to firm up the low-FP statistical claim
+    # (M9). Defaults are unchanged so CI numbers stay comparable.
+    import argparse
+
+    _parser = argparse.ArgumentParser(description="Project ARJUNA benchmark suite")
+    _parser.add_argument(
+        "--large-nominal",
+        type=int,
+        default=3000,
+        help="Sample count for the unclamped nominal FP check (default 3000; "
+        "use e.g. 20000 for high-statistics evidence).",
+    )
+    _args = _parser.parse_args()
+
+    # Windows consoles default to a cp1252 codepage that cannot encode glyphs
+    # used in this report (σ, µ, ±). Reconfigure stdout to UTF-8 (fail-safe
+    # replacement) so the full evaluation completes on any platform.
+    # Note: TextIO does not statically declare reconfigure (it exists on
+    # io.TextIOWrapper at runtime), hence the dynamic getattr guard.
+    for _stream in (sys.stdout, sys.stderr):
+        _reconfigure = getattr(_stream, "reconfigure", None)
+        if callable(_reconfigure):
+            try:
+                _reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+    run_full_evaluation(unclamped_nominal_samples=_args.large_nominal)

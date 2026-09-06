@@ -113,7 +113,7 @@ def test_simulator_criticality_convention_not_inverted():
     """The project-wide convention is Level 1 = LOW criticality, Level 3 =
     MISSION-CRITICAL (matching criticality_config, server, and the frontend).
     A divergent simulator docstring/code inverted this — lock the direction."""
-    from Backend.criticality_config import CRITICALITY_CONFIG, get_config
+    from Backend.criticality_config import get_config
     l1, l3 = get_config(1), get_config(3)
     # Mission-critical (L3) must have the TIGHTEST CUSUM threshold.
     assert l3["cusum_threshold"] < l1["cusum_threshold"], (

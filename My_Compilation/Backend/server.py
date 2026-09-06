@@ -40,14 +40,19 @@ try:
     from Backend.security import ALLOWED_ORIGINS, get_security_status, verify_operator_access, verify_websocket_auth
     from Backend.simulator import ComponentSimulator
 except ImportError:
-    from cusum_drift import DriftDetector
-    from database import get_recent_telemetry, insert_telemetry, log_event, telemetry_store
-    from isolation_forest import LinearRegressionDriftPredictor, MultivariateAnomalyDetector
-    from schemas import FaultInjectionRequest
-    from security import ALLOWED_ORIGINS, get_security_status, verify_operator_access, verify_websocket_auth
-    from simulator import ComponentSimulator
+    from cusum_drift import DriftDetector  # type: ignore[no-redef]
+    from database import get_recent_telemetry, insert_telemetry, log_event, telemetry_store  # type: ignore[no-redef]
+    from isolation_forest import LinearRegressionDriftPredictor, MultivariateAnomalyDetector  # type: ignore[no-redef]
+    from schemas import FaultInjectionRequest  # type: ignore[no-redef]
+    from security import (  # type: ignore[no-redef]
+        ALLOWED_ORIGINS,
+        get_security_status,
+        verify_operator_access,
+        verify_websocket_auth,
+    )
+    from simulator import ComponentSimulator  # type: ignore[no-redef]
 
-    from criticality_config import CRITICALITY_CONFIG
+    from criticality_config import CRITICALITY_CONFIG  # type: ignore[no-redef]
 
 # Global Model & State
 # NOTE: These are lazily-initialized process globals, set in get_or_train_model() during
@@ -92,7 +97,7 @@ TEAM_FAULT_SCENARIOS = {
 
 async def _persistence_worker() -> None:
     while True:
-        kind, payload = await persistence_queue.get()  # type: ignore[attr-defined]
+        kind, payload = await persistence_queue.get()  # type: ignore[union-attr]
         try:
             if kind == "telemetry":
                 await asyncio.to_thread(insert_telemetry, payload)
@@ -101,7 +106,7 @@ async def _persistence_worker() -> None:
         except Exception:
             logger.exception("Persistence operation failed; live telemetry continues")
         finally:
-            persistence_queue.task_done()  # type: ignore[attr-defined]
+            persistence_queue.task_done()  # type: ignore[union-attr]
 
 
 async def _enqueue_persistence(kind: str, payload) -> None:
@@ -164,7 +169,7 @@ def get_or_train_model():
             try:
                 from Backend.simulator import generate_dataset
             except ImportError:
-                from simulator import generate_dataset
+                from simulator import generate_dataset  # type: ignore[no-redef]
 
             generate_dataset(str(sample_csv), n_normal=10000, n_drift=0, n_short=0)
 

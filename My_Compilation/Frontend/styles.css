@@ -92,6 +92,7 @@ html, body {
     margin-bottom: 14px;
     background: linear-gradient(90deg, #38bdf8, #ffffff, #a855f7);
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
@@ -610,7 +611,10 @@ html, body {
    ========================================================= */
 .mainDashboardGrid {
     display: grid;
-    grid-template-columns: 1.45fr 1fr;
+    /* Layout: chart panel spans the full width; the QA/XAI audit panel sits
+       directly below it (single-column stack). Chart.js uses the full canvas
+       width for the waveform history. */
+    grid-template-columns: 1fr;
     gap: 18px;
     margin-bottom: 20px;
     align-items: stretch;
@@ -683,6 +687,14 @@ html, body {
     width: 100%;
     height: 100%;
     min-height: 280px;
+    /* FIX: the container previously had no upper bound. When the grid row
+       stretched (taller QA/alert column), Chart.js grew the canvas with it —
+       the data lines ended up far below the fold and the chart appeared
+       "empty". Cap it relative to the viewport so it scales with the device
+       instead of being a fixed pixel height. */
+    max-height: clamp(280px, 52vh, 460px);
+    /* Prevent Chart.js ResizeObserver feedback growth */
+    overflow: hidden;
 }
 
 /* =========================================================
@@ -952,12 +964,10 @@ html, body {
    RESPONSIVE MEDIA QUERIES
    ========================================================= */
 @media (max-width: 1280px) {
-    .mainDashboardGrid {
-        grid-template-columns: 1fr;
-    }
     .chartPanel {
-        height: 420px;
-        min-height: 360px;
+        /* Device-relative instead of a fixed pixel height */
+        height: auto;
+        min-height: clamp(320px, 52vh, 460px);
     }
     .alertPanel {
         height: auto;

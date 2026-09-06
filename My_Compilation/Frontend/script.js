@@ -80,6 +80,10 @@ document.addEventListener("DOMContentLoaded", () => {
     }, 1000);
 
     function updateBurnInInterval(virtualHour, isRejected = false) {
+        // Harden: coerce to a finite non-negative number before it reaches
+        // arithmetic (progress bar) or the innerHTML template below.
+        virtualHour = Number(virtualHour);
+        if (!Number.isFinite(virtualHour) || virtualHour < 0) virtualHour = 0;
         if (pendingReset) {
             virtualHour = 0;
             isRejected = false;
@@ -479,19 +483,22 @@ document.addEventListener("DOMContentLoaded", () => {
         if (telemetryChart) {
             const now = new Date().toLocaleTimeString().split(" ")[0];
             telemetryChart.data.labels.push(now);
-            telemetryChart.data.labels.shift();
-
             telemetryChart.data.datasets[0].data.push(iddq);
-            telemetryChart.data.datasets[0].data.shift();
-
             telemetryChart.data.datasets[1].data.push(v);
-            telemetryChart.data.datasets[1].data.shift();
-
             telemetryChart.data.datasets[2].data.push(c);
-            telemetryChart.data.datasets[2].data.shift();
-
             telemetryChart.data.datasets[3].data.push(t);
-            telemetryChart.data.datasets[3].data.shift();
+
+            // FIX: defensive trim to the fixed window. The previous code did
+            // exactly one shift() per push(), which silently froze the chart
+            // at whatever length a history hydration had left the arrays at
+            // (e.g. 1 point -> single dots, no lines, forever).
+            while (telemetryChart.data.labels.length > MAX_POINTS) {
+                telemetryChart.data.labels.shift();
+                telemetryChart.data.datasets[0].data.shift();
+                telemetryChart.data.datasets[1].data.shift();
+                telemetryChart.data.datasets[2].data.shift();
+                telemetryChart.data.datasets[3].data.shift();
+            }
 
             telemetryChart.update("none");
         }
@@ -657,14 +664,26 @@ document.addEventListener("DOMContentLoaded", () => {
             const frames = await response.json();
             if (!Array.isArray(frames) || frames.length === 0) return;
             const recent = frames.slice(-30);
-            telemetryChart.data.labels = recent.map((frame) => {
-                const timestamp = frame.timestamp ? new Date(frame.timestamp) : new Date();
-                return timestamp.toLocaleTimeString().split(" ")[0];
-            });
-            telemetryChart.data.datasets[0].data = recent.map((frame) => Number(frame.iddq_uA ?? frame.iddq ?? 10));
-            telemetryChart.data.datasets[1].data = recent.map((frame) => Number(frame.voltage ?? 5));
-            telemetryChart.data.datasets[2].data = recent.map((frame) => Number(frame.current ?? 1.2));
-            telemetryChart.data.datasets[3].data = recent.map((frame) => Number(frame.temperature ?? 125));
+            // FIX: pad back to the full MAX_POINTS window. If the server has
+            // fewer records than the chart window (e.g. 1 frame right after a
+            // restart), replacing the arrays outright collapsed the chart to
+            // that length and the live push/shift cycle kept it there — so no
+            // line could ever form (a line needs >= 2 points). Nulls are
+            // skipped by Chart.js, giving a clean growing line instead.
+            const pad = Math.max(0, MAX_POINTS - recent.length);
+            const padLabels = Array(pad).fill("");
+            telemetryChart.data.labels = [
+                ...padLabels,
+                ...recent.map((frame) => {
+                    const timestamp = frame.timestamp ? new Date(frame.timestamp) : new Date();
+                    return timestamp.toLocaleTimeString().split(" ")[0];
+                })
+            ];
+            const padData = Array(pad).fill(null);
+            telemetryChart.data.datasets[0].data = [...padData, ...recent.map((frame) => Number(frame.iddq_uA ?? frame.iddq ?? 10))];
+            telemetryChart.data.datasets[1].data = [...padData, ...recent.map((frame) => Number(frame.voltage ?? 5))];
+            telemetryChart.data.datasets[2].data = [...padData, ...recent.map((frame) => Number(frame.current ?? 1.2))];
+            telemetryChart.data.datasets[3].data = [...padData, ...recent.map((frame) => Number(frame.temperature ?? 125))];
             telemetryChart.update("none");
         } catch (error) {
             console.warn("Team history is unavailable; continuing with live telemetry.", error);
